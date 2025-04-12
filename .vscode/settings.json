@@ -1,0 +1,19 @@
+{
+    "files.associations": {
+        "*.lua": "xmake",
+        "fcntl.h": "c",
+        "fs.h": "c",
+        "user.h": "c",
+        "types.h": "c",
+        "stat.h": "c",
+        "proc.h": "c",
+        "ratio": "c",
+        "array": "c",
+        "deque": "c",
+        "string": "c",
+        "unordered_map": "c",
+        "vector": "c",
+        "string_view": "c",
+        "initializer_list": "c"
+    }
+}
