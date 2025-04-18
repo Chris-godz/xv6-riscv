@@ -132,6 +132,13 @@ found:
     return 0;
   }
 
+  // Allocate a svtrapframe page.
+  if((p->svtrapframe = (struct trapframe *)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -146,6 +153,10 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+
+  p->interval = 0;
+  p->ticks = 0;
+  p->handler = 0;
   return p;
 }
 
@@ -158,6 +169,11 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+  
+  if(p->svtrapframe)
+    kfree((void*)p->svtrapframe);
+  p->svtrapframe = 0;
+
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -169,6 +185,9 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->interval = 0;
+  p->ticks = 0;
+  p->handler = 0;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -693,3 +712,15 @@ procdump(void)
     printf("\n");
   }
 }
+
+void backtrace(void)
+{
+  uint64 fp = r_fp();
+  uint64 page = PGROUNDDOWN(fp);
+  while (PGROUNDDOWN(fp) == page)
+  {
+    printf("%p\n", (void *)(*(uint64 *)(fp - 8)));
+    fp = *(uint64 *)(fp - 16);
+  }
+}
+

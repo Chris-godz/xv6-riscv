@@ -1,0 +1,9 @@
+1.a0 a1 ... a2 holds 13 when main calls printf
+
+2.0xe: <f>  0x0: <g>
+
+3.0x6bc:printf
+
+4.after jal	6bc <printf>; the ra will be set to 34
+
+5.HE110 World
