@@ -37,7 +37,8 @@ void
 usertrap(void)
 {
   int which_dev = 0;
-
+  pte_t* pte;
+  char* mem;
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
 
@@ -68,10 +69,44 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-    printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
-    setkilled(p);
+    uint64 va = r_stval();
+    if(va >= MAXVA){
+      setkilled(p);
+      goto err;
+    }
+    if((pte = walk( p->pagetable, va , 0)) && (*pte & PTE_COW))
+    {
+      uint64 pa = PTE2PA(*pte);
+      if(r_ref((void*)pa) == 1){
+        *pte &= ~PTE_COW;
+        *pte |= PTE_W;
+        // 修改后刷新TLB
+        sfence_vma();
+      }
+      else {
+        if( (mem = kalloc()) == 0)
+        {
+          printf("usertrap(): no phy mem pid=%d\n", p->pid);
+          setkilled(p);
+          goto err;
+        }
+        memmove(mem, (char *)pa , PGSIZE);
+        uint64 flags = PTE_FLAGS(*pte);
+        flags &= ~PTE_COW;
+        *pte = PA2PTE(mem) | flags | PTE_V | PTE_W;
+        kfree((void *)pa);
+        // 修改后刷新TLB
+        sfence_vma();
+      }
+    }
+    else {
+      printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
+      setkilled(p);
+    }
   }
+
+err:
 
   if(killed(p))
     exit(-1);
