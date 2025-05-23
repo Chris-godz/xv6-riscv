@@ -333,6 +333,30 @@ sys_open(void)
       end_op();
       return -1;
     }
+    if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)){
+      char target[MAXPATH];
+      int i;
+      for(i = 0; i < 10; i++){
+        if(readi(ip, 0, (uint64)&target, 0, MAXPATH) != MAXPATH){
+          iunlockput(ip);
+          end_op();
+          return -1;
+        }
+        iunlockput(ip);
+        if((ip = namei(target)) == 0){
+          end_op();
+          return -1;
+        }
+        ilock(ip);
+        if(ip->type != T_SYMLINK)
+          break;
+      }
+      if(i == 10 && ip->type == T_SYMLINK){
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+    }
   }
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
@@ -356,6 +380,7 @@ sys_open(void)
     f->type = FD_INODE;
     f->off = 0;
   }
+
   f->ip = ip;
   f->readable = !(omode & O_WRONLY);
   f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
@@ -501,5 +526,31 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_symlink(void)
+{
+  char target[MAXPATH], linkname[MAXPATH];
+  struct inode *ip;
+
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, linkname, MAXPATH) < 0)
+    return -1;
+
+  begin_op();
+  if((ip = create(linkname, T_SYMLINK, 0, 0)) == 0){
+    end_op();
+    return -1;
+  }
+  // ilock(ip);
+  if(writei(ip, 0, (uint64)&target, 0, MAXPATH) != MAXPATH)
+  {
+    iunlockput(ip);
+    return -1;
+  }
+  iunlockput(ip);
+  end_op();
+
   return 0;
 }
