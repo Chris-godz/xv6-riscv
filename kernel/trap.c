@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -67,7 +71,51 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } else if(r_scause() == 13 || r_scause() == 15){
+    // page fault or load/store misaligned
+    uint64 va = r_stval();
+    if(va >= p->sz || va < p->trapframe->sp){
+      goto error;
+    }
+
+    struct vma *vmatable =  p->vmatable;
+    va = PGROUNDDOWN(va);
+
+    int i;
+    for(i = 0; i < MAXVMA; i++){
+      if(vmatable[i].valid && va >= vmatable[i].addr && va < vmatable[i].addr + vmatable[i].len){
+        char *mem = kalloc();
+        if(!mem){
+          goto error;
+        }
+        memset(mem, 0, PGSIZE);
+        int perm = (vmatable[i].prot << 1) | PTE_U;
+        if(vmatable[i].flags & MAP_SHARED){
+          perm |= PTE_W;
+        }
+        if(r_scause() == 15 && (vmatable[i].prot & PROT_WRITE) == 0){
+          goto error;
+        }       
+        int offset = va - vmatable[i].addr + vmatable[i].offset;
+        ilock(vmatable[i].f->ip);
+        readi(vmatable[i].f->ip, 0, (uint64)mem, offset, PGSIZE);
+        iunlock(vmatable[i].f->ip);
+
+        if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, perm) != 0){
+          kfree(mem);
+          goto error;
+        }
+
+        break;
+      }
+    }
+    if(i == MAXVMA){
+      // no vma found
+      goto error;
+    }
+  } 
+  else {
+    error:
     printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
     printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
     setkilled(p);

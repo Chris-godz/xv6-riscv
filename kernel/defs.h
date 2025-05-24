@@ -143,6 +143,7 @@ char*           strncpy(char*, const char*, int);
 
 // syscall.c
 void            argint(int, int*);
+void            argsize(int, uint32 *);
 int             argstr(int, char*, int);
 void            argaddr(int, uint64 *);
 int             fetchstr(uint64, char*, int);
@@ -237,3 +238,5 @@ void            netinit(void);
 void            net_rx(char *buf, int len);
 
 #endif
+
+int             munmap(struct proc*,uint64,int,int);

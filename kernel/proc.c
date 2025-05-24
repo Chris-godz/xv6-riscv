@@ -294,6 +294,17 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+
+  for(int i = 0; i < MAXVMA; i++){
+    if(p->vmatable[i].valid){
+      np->vmatable[i] = p->vmatable[i];
+      if(np->vmatable[i].f){
+        np->vmatable[i].f = filedup(np->vmatable[i].f);
+      }
+    }
+  }
+
+
   np->sz = p->sz;
 
   // copy saved user registers.
@@ -357,6 +368,13 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+
+  // 关闭所有的内存映射
+  for(int i = 0; i < MAXVMA; i++){
+    if(p->vmatable[i].valid){
+      munmap(p, p->vmatable[i].addr, i, p->vmatable[i].len);
     }
   }
 

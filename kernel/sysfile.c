@@ -503,3 +503,143 @@ sys_pipe(void)
   }
   return 0;
 }
+
+
+uint64
+sys_mmap(void)
+{
+  uint32 length;
+  int prot, flags, fd;
+  struct file *f;
+  struct vma *vmatable;
+
+  argsize(1, &length);
+  argint(2, &prot);
+  argint(3, &flags);
+  
+  if (argfd(4, &fd, &f)<0)
+    return 0xffffffffffffffff;
+
+  if (!f->writable && (prot & PROT_WRITE) && (flags & MAP_SHARED)) 
+    return 0xffffffffffffffff;
+
+  if (!f->readable && (prot & PROT_READ)) 
+    return 0xffffffffffffffff;
+
+  struct proc *p = myproc();
+  vmatable = p->vmatable;
+  for(int i = 0; i < MAXVMA; i++){
+    if (vmatable[i].valid == 0) {
+      vmatable[i].valid = 1;
+      vmatable[i].addr = PGROUNDUP(p->sz);
+      vmatable[i].len = PGROUNDUP(length);
+      vmatable[i].prot = prot;
+      vmatable[i].flags = flags;
+      vmatable[i].f = filedup(f); // increment reference count
+      vmatable[i].offset = 0;
+
+      p->sz = vmatable[i].addr + vmatable[i].len;
+      return (uint)vmatable[i].addr;
+    }
+  }
+  printf("mmap: no free vma\n");
+  return 0xffffffffffffffff;
+}
+
+int
+munmap_writeback(struct file *f, uint64 addr, uint offset, int length)
+{
+  int max_write_size = ((MAXOPBLOCKS - 1 - 1 - 2) / 2) * BSIZE;
+  int bytes_written = 0;
+  int result, bytes_to_write;
+  
+  while (bytes_written < length) {
+    bytes_to_write = length - bytes_written;
+    if (bytes_to_write > max_write_size) {
+      bytes_to_write = max_write_size;
+    }
+
+    begin_op();
+    ilock(f->ip);
+    
+    result = writei(f->ip, 1, addr + bytes_written, offset, bytes_to_write);
+    if (result > 0) {
+      offset += result;
+    }
+    
+    iunlock(f->ip);
+    end_op();
+
+    if (result != bytes_to_write) {
+      break;
+    }
+    
+    bytes_written += result;
+  }
+
+  return (bytes_written == length) ? length : -1;
+}
+
+int
+munmap(struct proc *p, uint64 addr, int i, int len)
+{
+  uint filesz;
+  struct vma *vmatable = p->vmatable;
+  int writeable = (vmatable[i].flags & MAP_SHARED) && 
+                  (vmatable[i].prot & PROT_WRITE) &&
+                  (vmatable[i].f->writable);
+  uint64 va = addr;
+
+  filesz = vmatable[i].f->ip->size;
+  for(int j = 0; j < PGROUNDUP(len)/PGSIZE; j++){
+    if(walkaddr(p->pagetable, va) != 0){
+      if(writeable){
+        int off = va - vmatable[i].addr;
+        int file_offset = vmatable[i].offset + off;
+        int n = (file_offset + PGSIZE > filesz) ? (filesz - file_offset) : PGSIZE;
+        if(n > 0) {
+          if(munmap_writeback(vmatable[i].f, va, file_offset, n) < 0){
+            return -1;
+          }
+        }
+      }
+      uvmunmap(p->pagetable, va, 1, 0);  // 最后一个参数是1，表示释放物理内存
+    }
+    va += PGSIZE;
+  }
+  
+  if(addr == vmatable[i].addr){
+    vmatable[i].addr = va;
+    vmatable[i].offset += PGROUNDUP(len);
+  }
+  vmatable[i].len -= PGROUNDUP(len);
+  if(vmatable[i].len == 0){
+    fileclose(vmatable[i].f);
+    vmatable[i].valid = 0;
+    vmatable[i].f = 0;
+  }
+  return 0;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  uint32 len;
+  argaddr(0, &addr);
+  argsize(1, &len);
+
+  struct proc *p = myproc();
+  struct vma *vmatable = p->vmatable;
+
+  for(int i = 0; i < MAXVMA; i++){
+    if (vmatable[i].valid && addr >= vmatable[i].addr && addr < vmatable[i].addr + vmatable[i].len) {
+      if(munmap(p, addr, i, len) != 0){
+        printf("munmap: failed\n");
+        return -1;
+      }
+      return 0;
+    }
+  }
+  return -1;
+}
